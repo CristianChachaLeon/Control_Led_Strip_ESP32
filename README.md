@@ -1,2 +1,2 @@
 # Control_Led_Strip
-Control Stereo led with sound send from PC, led strip ws2812b
+Control LED strip sw2812b with ESP32 and data via UDP
