@@ -9,10 +9,10 @@
 WiFiManager wm;
 WiFiServer wifiServer(8090);
 
-#define MAX_BUFFER_SAFE 10
+#define MAX_BUFFER_SAFE 11
 #define SIZE_MONO_QUEUE 50
 #define SIZE_STEREO_QUEUE 40
-#define TIME_SEND_INFO 22
+#define TIME_SEND_INFO 42
 
 #define NUM_LEDS_L 4    // change
 #define NUM_LEDS_R 4    // change
@@ -63,14 +63,15 @@ enum sub_state_init {
 };
 
 enum sub_state_led_control {
-  Mono = 0,
-  Stereo,
-  Default
+  Default = 0,
+  Mono,
+  Stereo
+
 };
 
 enum state Central_State = Init;
 enum sub_state_init Init_State = Wifi_connect;
-enum sub_state_led_control Strip_State = Mono;
+enum sub_state_led_control Strip_State = Default;
 
 int messagesWaiting;
 
@@ -80,6 +81,11 @@ void setup() {
   Serial.println("CONTROL LED TCP IP protocol");
 
   queue_config = xQueueCreate( 5, sizeof( struct LedStripConfig * ) );
+  if (queue_config == NULL) {
+    Serial.println("Error: created config queue");
+  } else {
+    Serial.println("Succesfull : created config queue");
+  }
 
   pinMode(BTN_CHANGE_WIFI_CONFIG, INPUT_PULLUP);
   binSemaphore = xSemaphoreCreateBinary();
@@ -131,7 +137,8 @@ void loop() {
           break;
         case Inactive:
           WiFiClient client = wifiServer.available();
-          ListenClient(&client, &queue_config);
+          ListenClient(&client);
+
           break;
       }
       break;
@@ -144,7 +151,20 @@ void loop() {
       Strip_State = Mono;
       break;
     case Led_Control: // State Led Control
-    
+      //Serial.println("Mono");
+      WiFiClient client = wifiServer.available();
+      ListenClient_MONO(&client);
+
+      // ver la cantidad de datos que hay en la cola, en este caso se tiene 2 colas ?,
+      /*messagesWaiting = uxQueueMessagesWaiting(queue_mono);
+        Serial.print("datos en la cola mono: ");
+        Serial.println(messagesWaiting);
+        if (messagesWaiting > MAX_BUFFER_SAFE) {
+        xSemaphoreGive(binSemaphore);
+        //Serial.println("Iniciar task.. led");
+        } else {
+        // no no activate task, task is waiting
+        }*/
       break;
 
 
@@ -174,22 +194,22 @@ void setConfig(struct LedStripConfig * Config) {
     if (queue_stereo != NULL) {
       vQueueDelete(queue_stereo);
     }
-  }else if(!strcmp(Config->Mode, "Stereo")){
+  } else if (!strcmp(Config->Mode, "Stereo")) {
     //todo create task for stereo mode
-  }else{
+  } else {
     Serial.println("Configuracion : Desconocida");
   }
 
 }
 
-void ListenClient(WiFiClient* guest, QueueHandle_t* queue) {
+void ListenClient(WiFiClient* guest) {
   if (guest) {
     while (guest->connected()) {
       int i = 0;
       while (guest->available() > 0) {
         char c = guest->read();
         if ( c == '\n') {
-          Serial.println((char*) data_TCPIP);// data_TCPIP=#FFEECC255\n
+          //Serial.println((char*) data_TCPIP);// data_TCPIP=#FFEECC255\n
 
           if (Is_config_queue(data_TCPIP)) {
             Serial.println("Load configuration");
@@ -199,6 +219,22 @@ void ListenClient(WiFiClient* guest, QueueHandle_t* queue) {
 
             Central_State = Configuration;
 
+          } else {
+            struct Led_Mono led_mono_data;
+            char tmp_brightness[4];
+
+            memcpy(led_mono_data.color, data_TCPIP, 7);
+
+            memcpy(tmp_brightness, data_TCPIP + 7, 4);
+            led_mono_data.brightness = atoi(tmp_brightness);
+            if (xQueueSend(queue_mono, &led_mono_data, ( TickType_t ) 10 ) != pdPASS) {
+              Serial.println("Error: Color and brightness NO load in queue mono");
+            }
+
+
+
+
+
           }
           memset(data_TCPIP, '\0', sizeof(data_TCPIP));
           i = 0;
@@ -206,6 +242,74 @@ void ListenClient(WiFiClient* guest, QueueHandle_t* queue) {
           data_TCPIP[i] = c;
           i++;
         }
+      }
+      // ver la cantidad de datos que hay en la cola, en este caso se tiene 2 colas ?,
+      /*messagesWaiting = uxQueueMessagesWaiting(queue_mono);
+      Serial.print("datos en la cola mono: ");
+      Serial.println(messagesWaiting);
+      if (messagesWaiting > MAX_BUFFER_SAFE) {
+        xSemaphoreGive(binSemaphore);
+        //Serial.println("Iniciar task.. led");
+      } else {
+        // no no activate task, task is waiting
+      }*/
+      delay(1);
+    }
+    guest->stop();
+    //Serial.println("Client disconnected");
+  }
+}
+
+void ListenClient_MONO(WiFiClient* guest) {
+  if (guest) {
+    while (guest->connected()) {
+      int i = 0;
+      while (guest->available() > 0) {
+        char c = guest->read();
+        if ( c == '\n') {
+          //Serial.println((char*) data_TCPIP);// data_TCPIP=#FFEECC255\n
+
+          if (Is_config_queue(data_TCPIP)) {
+            Serial.println("Load configuration");
+            struct LedStripConfig Config_Strip;
+            strcpy(Config_Strip.Mode, "Mono"); // Data hardcode!!!
+            load_config_in_queue(&Config_Strip);
+
+            Central_State = Configuration;
+
+          } else {
+            struct Led_Mono led_mono_data;
+            char tmp_brightness[4];
+
+            memcpy(led_mono_data.color, data_TCPIP, 7);
+
+            memcpy(tmp_brightness, data_TCPIP + 7, 4);
+            led_mono_data.brightness = atoi(tmp_brightness);
+            if (xQueueSend(queue_mono, &led_mono_data, ( TickType_t ) 10 ) != pdPASS) {
+              Serial.println("Error: Color and brightness NO load in queue mono");
+            }
+
+
+
+
+
+          }
+          memset(data_TCPIP, '\0', sizeof(data_TCPIP));
+          i = 0;
+        } else {
+          data_TCPIP[i] = c;
+          i++;
+        }
+      }
+      // ver la cantidad de datos que hay en la cola, en este caso se tiene 2 colas ?,
+      messagesWaiting = uxQueueMessagesWaiting(queue_mono);
+      Serial.print("datos en la cola mono: ");
+      Serial.println(messagesWaiting);
+      if (messagesWaiting > MAX_BUFFER_SAFE) {
+        xSemaphoreGive(binSemaphore);
+        //Serial.println("Iniciar task.. led");
+      } else {
+        // no no activate task, task is waiting
       }
       delay(1);
     }
@@ -229,11 +333,12 @@ void load_config_in_queue(struct LedStripConfig * Config) {
   } else {
     Serial.println("Successful: Load data in queue config");
     Serial.println((char*) Config->Mode);
+
   }
 }
 
 void read_config_queue(struct LedStripConfig * Config) {
-  if (xQueueReceive(queue_config, &Config, ( TickType_t ) 10 ) == pdPASS) {
+  if (xQueueReceive(queue_config, Config, ( TickType_t ) 10 ) == pdPASS) {
     Serial.println("Successful : Data read from config queue");
     Serial.println((char*) Config->Mode);
   } else {
@@ -252,10 +357,10 @@ void TaskLedMono(void *pvParameters) {
     xSemaphoreTake(binSemaphore, portMAX_DELAY);
     while (read_data) {
       if (xQueueReceive(queue_mono, &led_mono, ( TickType_t ) 10) == pdPASS) {
-        Serial.print("Task :LED ON!!!  -->");
-        Serial.print(millis());
-        Serial.print("   :  ");
-        Serial.println(led_mono.brightness);
+        /*Serial.print("Task :LED ON!!!  -->");
+          Serial.print(millis());
+          Serial.print("   :  ");
+          Serial.println(led_mono.brightness);*/
         red = red_from_hexColor(led_mono.color);
         green = green_from_hexColor(led_mono.color);
         blue = blue_from_hexColor(led_mono.color);
