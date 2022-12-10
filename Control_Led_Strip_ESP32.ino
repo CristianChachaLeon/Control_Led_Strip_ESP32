@@ -17,10 +17,10 @@ unsigned int remotePort = 8889;
 #define UDP_TX_PACKET_MAX_SIZE 50
 #define MAX_BUFFER_SAFE 10
 #define SIZE_MONO_QUEUE 50
-#define SIZE_STEREO_QUEUE 40
-#define TIME_SEND_INFO 22
+#define SIZE_STEREO_QUEUE 100
+#define TIME_SEND_INFO 42
 
-#define NUM_LEDS_L 4    // change
+#define NUM_LEDS_L 7    // change
 #define NUM_LEDS_R 4    // change
 #define DATA_PIN_L 22   // change
 #define DATA_PIN_R 23   // change
@@ -38,9 +38,9 @@ struct Led_Mono {
 };
 
 struct Led_Stereo {
-  char color_left[7];
+  char color_left[8];
   byte brightness_left;
-  char color_right[7];
+  char color_right[8];
   byte brightness_right;
 };
 
@@ -131,28 +131,12 @@ void loop() {
           if (packetSize) {
             // read the packet into packetBufffer
             UDP.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-            /*Serial.println();
-              Serial.print("Received packet of size ");
-              Serial.print(packetSize);
-              Serial.print(" from ");
-              Serial.print(UDP.remoteIP());
-              Serial.print(":");
-              Serial.println(UDP.remotePort());
-              Serial.print("Payload: ");
-              Serial.write((uint8_t*)packetBuffer, (size_t)packetSize);
-              Serial.println();
-              Serial.println((char *)packetBuffer);
-              char * init;
-              init = strtok(packetBuffer, ":");
-              Serial.println((char *)init);
-              init = strtok(NULL, " ");
-              Serial.println((char *)init);
-              Serial.println((char *)packetBuffer);*/
+
             if (Is_config_queue(packetBuffer)) {
               Serial.println((char *)packetBuffer);
               struct LedStripConfig Config_Strip;
-              strcpy(Config_Strip.Mode, "Mono"); // Data hardcode!!!
-
+              //strcpy(Config_Strip.Mode, "Mono"); // Data hardcode!!!
+              strcpy(Config_Strip.Mode, "Stereo"); // Data hardcode!!!
               load_config_in_queue(&Config_Strip);
 
               memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
@@ -172,6 +156,7 @@ void loop() {
 
       if (!strcmp(Config_Strip_read.Mode, "Mono")) {
         Serial.println("Configuracion : Mono");
+
         xTaskCreate(TaskLedMono, "LED MODE MONO", 1024, NULL, 2, NULL);
         queue_mono = xQueueCreate( SIZE_MONO_QUEUE, sizeof( struct Led_Mono ) );
         if (queue_mono == NULL) {
@@ -182,11 +167,13 @@ void loop() {
           vQueueDelete(queue_stereo);
           Serial.println("Successfull : Delete Queue Stereo");
         }
+        Central_State = Led_Control;
+        Strip_State = Mono;
       } else if (!strcmp(Config_Strip_read.Mode, "Stereo")) {
         Serial.println("Configuracion : Stereo");
 
         queue_stereo = xQueueCreate( SIZE_STEREO_QUEUE, sizeof( struct Led_Stereo ));
-
+        Serial.println("Cola creada debug");
         if (queue_stereo == NULL) {
           Serial.println("Error: Queue stereo not created");
         }
@@ -195,14 +182,15 @@ void loop() {
           vQueueDelete(queue_mono);
           Serial.println("Successfull : Delete Queue mono");
         }
+        Central_State = Led_Control;
+        Strip_State = Stereo;
 
       } else {
         Serial.println("Configuracion : Desconocida");
       }
 
 
-      Central_State = Led_Control;
-      Strip_State = Mono;
+
 
       break;
     case Led_Control:
@@ -217,17 +205,17 @@ void loop() {
           Strip_State = Default;
 
         } else {
-          Serial.print((char*)packetBuffer);
-          Serial.print(" --> ");
-          Serial.println(millis());
-          //
+          Serial.println((char*)packetBuffer);
+
+
         }
+
         // si es config carga en queue y cambiar a estado de Config.
         // se podria cambiar tambien el stado de Strip_state para que se apagen los leds, mientras se cambia la configuracion
         switch (Strip_State) {
 
           case Mono:
-            Serial.println(": Mono");
+            //Serial.println(": Mono");
             struct Led_Mono led_mono_data;
             char tmp_brightness[4];
 
@@ -235,27 +223,35 @@ void loop() {
 
             memcpy(tmp_brightness, packetBuffer + 7, 4);
             led_mono_data.brightness = atoi(tmp_brightness);
-            if (xQueueSend(queue_mono, &led_mono_data, ( TickType_t ) 10 ) == pdPASS) {
-              Serial.println("Successful: Color and brightness load in queue mono");
-            } else {
+            if (xQueueSend(queue_mono, &led_mono_data, ( TickType_t ) 10 ) != pdPASS) {
               Serial.println("Error: Color and brightness NO load in queue mono");
             }
-
-
-
 
             memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
 
             break;
           case Stereo:
             Serial.println(": Stereo");
-            //lectura unicamente los datos ?
-            //Color izq
-            //Brillo izq
-            //Color der
-            //Brillo der
+            struct Led_Stereo led_stereo_data;
+            char tmp_brightness_left[4]={};
+            char tmp_brightness_right[4]={};
+            char * coincidence;
+            int separator;
+            coincidence = strchr(packetBuffer, '-');
+            separator = (int)(coincidence - packetBuffer);
 
-            //aplicar sobre led strip x2 ( canal izq y der)
+            //Data channel left
+            memcpy(led_stereo_data.color_left, packetBuffer, 7);
+            memcpy(tmp_brightness_left, packetBuffer + 7, separator - 7); //obtain brightness
+            
+            //Data channel right
+            memcpy(led_stereo_data.color_right, packetBuffer+separator+1, 7);
+            memcpy(tmp_brightness_right, packetBuffer+separator+1+7,4); //obtain brightness
+
+            if (xQueueSend(queue_stereo, &led_stereo_data, ( TickType_t ) 10 ) != pdPASS) {
+              Serial.println("Error: Color and brightness NO load in queue stereo");
+            }
+            
 
             break;
         }
@@ -263,7 +259,8 @@ void loop() {
 
 
       // ver la cantidad de datos que hay en la cola, en este caso se tiene 2 colas ?,
-      messagesWaiting = uxQueueMessagesWaiting(queue_mono);
+      // tener en cuenta que son dos semanafros 
+      messagesWaiting = uxQueueMessagesWaiting(queue_stereo);
       //Serial.print("datos en la cola mono: ");
       //Serial.println(messagesWaiting);
       if (messagesWaiting > MAX_BUFFER_SAFE) {
@@ -333,20 +330,20 @@ void TaskLedMono(void *pvParameters) {
     xSemaphoreTake(binSemaphore, portMAX_DELAY);
     while (read_data) {
       if (xQueueReceive(queue_mono, &led_mono, ( TickType_t ) 10) == pdPASS) {
-        Serial.print("Task :LED ON!!!  -->");
-        Serial.print(millis());
-        Serial.print("   :  ");
-        Serial.println(led_mono.brightness);
+        /*Serial.print("Task :LED ON!!!  -->");
+          Serial.print(millis());
+          Serial.print("   :  ");
+          Serial.println(led_mono.brightness);*/
         red = red_from_hexColor(led_mono.color);
         green = green_from_hexColor(led_mono.color);
         blue = blue_from_hexColor(led_mono.color);
 
         for (int i = 0; i < NUM_LEDS_L; i++) {
           leds_L[i] = CRGB(red, green, blue);
-          
+
         }
 
-        for (int i = 0; i < NUM_LEDS_R; i++){
+        for (int i = 0; i < NUM_LEDS_R; i++) {
           leds_R[i] = CRGB(red, green, blue);
         }
         FastLED[0].showLeds(led_mono.brightness);
