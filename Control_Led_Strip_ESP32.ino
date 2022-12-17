@@ -15,15 +15,15 @@ WiFiUDP UDP;
 unsigned int localPort = 8888;
 unsigned int remotePort = 8889;
 #define UDP_TX_PACKET_MAX_SIZE 50
-#define MAX_BUFFER_SAFE 10
+#define MAX_BUFFER_SAFE 5
 #define SIZE_MONO_QUEUE 50
 #define SIZE_STEREO_QUEUE 100
-#define TIME_SEND_INFO 42
+#define TIME_SEND_INFO 46
 
-#define NUM_LEDS_L 7    // change
-#define NUM_LEDS_R 4    // change
-#define DATA_PIN_L 22   // change
-#define DATA_PIN_R 23   // change
+#define NUM_LEDS_L 20    // change
+#define NUM_LEDS_R 20    // change
+#define DATA_PIN_L 23   // change
+#define DATA_PIN_R 22   // change
 CRGB leds_L[NUM_LEDS_L];  // change
 CRGB leds_R[NUM_LEDS_R];  // change
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE] = {};
@@ -83,15 +83,18 @@ void setup() {
   binSemaphore = xSemaphoreCreateBinary();
   FastLED.addLeds<NEOPIXEL, DATA_PIN_L>(leds_L, NUM_LEDS_L);
   FastLED.addLeds<NEOPIXEL, DATA_PIN_R>(leds_R, NUM_LEDS_R);
-  for (int i = 0; i < NUM_LEDS_L; i++) {
-    leds_L[i] = CRGB(120, 20, 100);
+
+  for (int j = 0; j < 255; j++) {
+    for (int i = 0; i < NUM_LEDS_L; i++) {
+      leds_L[i] = CHSV(j, 255, 255);
+    }
+    for (int i = 0; i < NUM_LEDS_R; i++) {
+      leds_R[i] = CHSV(0, j, 255);
+    }
+    FastLED[0].showLeds(10);
+    FastLED[1].showLeds(10);
+    FastLED.delay(100); 
   }
-  for (int i = 0; i < NUM_LEDS_R; i++) {
-    leds_R[i] = CRGB(255, 0, 0);
-  }
-  FastLED[0].showLeds(10);
-  FastLED[1].showLeds(10);
-  //FastLED.show();
 }
 
 void loop() {
@@ -173,6 +176,7 @@ void loop() {
         Serial.println("Configuracion : Stereo");
 
         queue_stereo = xQueueCreate( SIZE_STEREO_QUEUE, sizeof( struct Led_Stereo ));
+        xTaskCreate(TaskLedStereo, "LED MODE STEREO", 1024, NULL, 2, NULL);
         Serial.println("Cola creada debug");
         if (queue_stereo == NULL) {
           Serial.println("Error: Queue stereo not created");
@@ -204,11 +208,11 @@ void loop() {
           Central_State = Configuration;  //Change state to Configuration
           Strip_State = Default;
 
-        } else {
+        } /*else {
           Serial.println((char*)packetBuffer);
 
 
-        }
+        }*/
 
         // si es config carga en queue y cambiar a estado de Config.
         // se podria cambiar tambien el stado de Strip_state para que se apagen los leds, mientras se cambia la configuracion
@@ -231,27 +235,33 @@ void loop() {
 
             break;
           case Stereo:
-            Serial.println(": Stereo");
+            //Serial.println(": Stereo");
             struct Led_Stereo led_stereo_data;
-            char tmp_brightness_left[4]={};
-            char tmp_brightness_right[4]={};
+            char tmp_brightness_left[4] = {};
+            char tmp_brightness_right[4] = {};
             char * coincidence;
-            int separator;
+            int separator = 0;
             coincidence = strchr(packetBuffer, '-');
             separator = (int)(coincidence - packetBuffer);
 
             //Data channel left
             memcpy(led_stereo_data.color_left, packetBuffer, 7);
             memcpy(tmp_brightness_left, packetBuffer + 7, separator - 7); //obtain brightness
-            
+            led_stereo_data.brightness_left = atoi(tmp_brightness_left);
             //Data channel right
-            memcpy(led_stereo_data.color_right, packetBuffer+separator+1, 7);
-            memcpy(tmp_brightness_right, packetBuffer+separator+1+7,4); //obtain brightness
+            memcpy(led_stereo_data.color_right, packetBuffer + separator + 1, 7);
+            memcpy(tmp_brightness_right, packetBuffer + separator + 1 + 7, 4); //obtain brightness
+            led_stereo_data.brightness_right = atoi(tmp_brightness_right);
+            //Serial.println((char*)led_stereo_data.brightness_right);
+
+            //Serial.print("Atoi : ");
+            //Serial.println(led_stereo_data.brightness_right);
 
             if (xQueueSend(queue_stereo, &led_stereo_data, ( TickType_t ) 10 ) != pdPASS) {
               Serial.println("Error: Color and brightness NO load in queue stereo");
             }
-            
+            memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
+
 
             break;
         }
@@ -259,16 +269,22 @@ void loop() {
 
 
       // ver la cantidad de datos que hay en la cola, en este caso se tiene 2 colas ?,
-      // tener en cuenta que son dos semanafros 
-      messagesWaiting = uxQueueMessagesWaiting(queue_stereo);
-      //Serial.print("datos en la cola mono: ");
-      //Serial.println(messagesWaiting);
-      if (messagesWaiting > MAX_BUFFER_SAFE) {
-        xSemaphoreGive(binSemaphore);
-        //Serial.println("Iniciar task.. led");
-      } else {
-        // no no activate task, task is waiting
+      // tener en cuenta que son dos semanafros
+
+      if (queue_stereo != NULL) {
+        messagesWaiting = uxQueueMessagesWaiting(queue_stereo);
+        Serial.print("datos en la cola stereo: ");
+        Serial.println(messagesWaiting);
+        if (messagesWaiting > MAX_BUFFER_SAFE) {
+          xSemaphoreGive(binSemaphore);
+          //Serial.println("Iniciar task.. led");
+        } else {
+          // no no activate task, task is waiting
+        }
       }
+
+
+
 
 
 
@@ -361,7 +377,65 @@ void TaskLedMono(void *pvParameters) {
 
 }
 
-//funcion pendiente de probar
+void TaskLedStereo(void *pvParameters) {
+  struct Led_Stereo led_stereo;
+  bool read_data = true;
+  unsigned int red_left = 0 ;
+  unsigned int green_left = 0 ;
+  unsigned int blue_left = 0 ;
+  unsigned int red_right = 0 ;
+  unsigned int green_right = 0 ;
+  unsigned int blue_right = 0 ;
+  for (;;) {
+    xSemaphoreTake(binSemaphore, portMAX_DELAY);
+    while (read_data) {
+      if (xQueueReceive(queue_stereo, &led_stereo, ( TickType_t ) 10) == pdPASS) {
+        //if color is #XXXXXX cada led de un color
+        red_left = red_from_hexColor(led_stereo.color_left);
+        green_left = green_from_hexColor(led_stereo.color_left);
+        blue_left = blue_from_hexColor(led_stereo.color_left);
+
+        red_right = red_from_hexColor(led_stereo.color_right);
+        green_right = green_from_hexColor(led_stereo.color_right);
+        blue_right = blue_from_hexColor(led_stereo.color_right);
+
+        int limite_left = int(led_stereo.brightness_left * (NUM_LEDS_L / 255.0));
+
+        int limite_right = int(led_stereo.brightness_right * (NUM_LEDS_R / 255.0));
+        /*Serial.print("leds para izquierda: " );
+          Serial.println(limite_left);
+          Serial.print("leds para derecha " );
+          Serial.println(limite_right);*/
+        for (int i = 0; i < limite_left; i++) {
+          leds_L[i] = CRGB(red_left, green_left, blue_left);
+
+        }
+
+        for (int i = 0; i < limite_right; i++) {
+          leds_R[i] = CRGB(red_right, green_right, blue_right);
+        }
+        FastLED[0].showLeds(led_stereo.brightness_left);
+        FastLED[1].showLeds(led_stereo.brightness_right);
+
+        for ( int i = 0 ; i < NUM_LEDS_L; i++) {
+          leds_L[i] = CRGB(0, 0, 0);
+        }
+
+        for ( int i = 0 ; i < NUM_LEDS_R; i++) {
+          leds_R[i] = CRGB(0, 0, 0);
+        }
+
+
+      } else {
+        read_data = false;
+      }
+      vTaskDelay(pdMS_TO_TICKS(TIME_SEND_INFO));
+    }
+    read_data = true;
+  }
+}
+
+
 
 unsigned int red_from_hexColor(char * Hexcolor) {
   char color[3] = {};
