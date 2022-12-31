@@ -5,7 +5,7 @@ Python interface to control led
 
 
 Modes:
--Control color
--Rainbow
--Frecuency response
+* Control color
+* Rainbow
+* Frecuency response
 
