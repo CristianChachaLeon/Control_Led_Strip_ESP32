@@ -5,7 +5,6 @@
 #include <FastLED.h>
 
 
-
 #define BTN_CHANGE_WIFI_CONFIG 12
 
 
@@ -14,18 +13,19 @@ WiFiManager wm;
 WiFiUDP UDP;
 unsigned int localPort = 8888;
 unsigned int remotePort = 8889;
+
 #define UDP_TX_PACKET_MAX_SIZE 50
-#define MAX_BUFFER_SAFE 5
+#define MAX_BUFFER_SAFE 2
 #define SIZE_MONO_QUEUE 50
 #define SIZE_STEREO_QUEUE 100
 #define TIME_SEND_INFO 46
 
-#define NUM_LEDS_L 20    // change
-#define NUM_LEDS_R 20    // change
-#define DATA_PIN_L 23   // change
-#define DATA_PIN_R 22   // change
-CRGB leds_L[NUM_LEDS_L];  // change
-CRGB leds_R[NUM_LEDS_R];  // change
+#define NUM_LEDS_L 20    
+#define NUM_LEDS_R 20    
+#define DATA_PIN_L 23   
+#define DATA_PIN_R 22   
+CRGB leds_L[NUM_LEDS_L];  
+CRGB leds_R[NUM_LEDS_R];  
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE] = {};
 
 struct LedStripConfig {
@@ -45,11 +45,10 @@ struct Led_Stereo {
 };
 
 
-QueueHandle_t queue_config;
-QueueHandle_t queue_mono;
 QueueHandle_t queue_stereo;
-
 xSemaphoreHandle binSemaphore;
+TaskHandle_t TaskHandle_Stereo;
+
 enum state {
   Init = 0,
   Configuration,
@@ -74,20 +73,22 @@ enum sub_state_init Init_State = Wifi_connect;
 enum sub_state_led_control Strip_State = Mono;
 
 int messagesWaiting;
+
+unsigned long previousMillis = 0;
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
-  Serial.println("Inicializacion");
-  queue_config = xQueueCreate( 5, sizeof( struct LedStripConfig * ) );
   pinMode(BTN_CHANGE_WIFI_CONFIG, INPUT_PULLUP);
   binSemaphore = xSemaphoreCreateBinary();
+
   FastLED.addLeds<NEOPIXEL, DATA_PIN_L>(leds_L, NUM_LEDS_L);
   FastLED.addLeds<NEOPIXEL, DATA_PIN_R>(leds_R, NUM_LEDS_R);
 
-  for (int i = 0; i < NUM_LEDS_L; i++) {
-    leds_L[i] = CHSV(1, 255, 255); //left channel
+  for (int i = 0; i < NUM_LEDS_L; i++) {  //left channel
+    leds_L[i] = CHSV(1, 255, 255);
   }
-  for (int i = 0; i < NUM_LEDS_R; i++) {
+  for (int i = 0; i < NUM_LEDS_R; i++) {  //right channel
     leds_R[i] = CHSV(1, 255, 255);
   }
 
@@ -97,11 +98,15 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  unsigned long currentMillis = millis();
 
   if (digitalRead(BTN_CHANGE_WIFI_CONFIG) == LOW) {
-    Central_State = Init;
-    Init_State = Change_wifi;
+    if ( currentMillis - previousMillis >= 1000) {
+      Central_State = Init;
+      Init_State = Change_wifi;
+    }
+  } else {
+    previousMillis = millis();
   }
 
   switch (Central_State) {
@@ -119,7 +124,20 @@ void loop() {
           }
           break;
         case Change_wifi:
+          Serial.println("Estado: Busqueda wifi");// Estado con leds
+          UDP.stop();
+          wm.setConfigPortalTimeout(120);
+          if (!wm.startConfigPortal("AutoConnectAP", "password")) {
+            Serial.println("failed to connect and hit timeout");
+            delay(1000);
+            //reset and try again, or maybe put it to deep sleep
+            ESP.restart();
+            delay(1000);
+          } else {
+            Serial.println("ESP32 : CONNECT ! :)");
+            ESP.restart();
 
+          }
           break;
         case UDP_conection:
           Serial.println("UDP INIT");
@@ -127,35 +145,25 @@ void loop() {
             Init_State = Inactive;
           break;
         case Inactive: //listen UDP
-
+          //Serial.println("Estado inactive");
           if (UDP.parsePacket()) {
+
             UDP.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE); // read the packet into packetBufffer
             if (init_system(packetBuffer)) {
-              memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
-
-              for (int i = 0; i < NUM_LEDS_L; i++) {
-                leds_L[i] =  CRGB(0, 0, 0); //left channel
-              }
-              for (int i = 0; i < NUM_LEDS_R; i++) {
-                leds_R[i] = CHSV(0, 0, 0);
-              }
-
-              leds_L[0] = CRGB(255, 255, 255); //left channel
-              leds_R[0] = CRGB(255, 255, 255);
-
-              FastLED[0].showLeds(10);
-              FastLED[1].showLeds(10);
-
-              delay(200);
-              leds_L[0] = CRGB(0, 0, 0); //left channel
-              leds_R[0] = CRGB(0, 0, 0);
-
-              FastLED[0].showLeds(10);
-              FastLED[1].showLeds(10);
-
               Central_State = Configuration;  //Change state to Configuration
+              sequenceConnect();
             }
+            memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
           }
+
+          if ( queue_stereo != NULL) {
+            Serial.println("Borrar task and Queue stereo...");
+            vTaskDelete(TaskHandle_Stereo);
+            vQueueDelete(queue_stereo);
+            queue_stereo = NULL;
+
+          }
+
           break;
       }
       break;
@@ -165,17 +173,19 @@ void loop() {
       if (queue_stereo == NULL) {
         Serial.println("Error: Queue stereo not created");
       }
-      xTaskCreate(TaskLedStereo, "LED MODE STEREO", 1024, NULL, 2, NULL);
+      xTaskCreate(TaskLedStereo, "LED MODE STEREO", 1024, NULL, 2, &TaskHandle_Stereo);
       Central_State = Led_Control;
       break;
     case Led_Control:
       if (UDP.parsePacket()) {
         UDP.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-        if (stop_system(packetBuffer)) { // delete task and queue
-          Central_State = Init;
-          Init_State = Inactive;
+        if (stop_system(packetBuffer) || init_system(packetBuffer)) { // delete task and queue
+          if (stop_system(packetBuffer)) {
+            Central_State = Init;
+            Init_State = Inactive;
+          }
           memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
-        } else { // read queue
+        } else {
           struct Led_Stereo led_stereo_data;
           char tmp_brightness_left[4] = {};
           char tmp_brightness_right[4] = {};
@@ -201,8 +211,6 @@ void loop() {
           }
           memset(packetBuffer, '\0', UDP_TX_PACKET_MAX_SIZE);
         }
-
-
       }
 
       messagesWaiting = uxQueueMessagesWaiting(queue_stereo);
@@ -218,9 +226,7 @@ void loop() {
 
 }
 
-
-
-boolean ConnectUDP() { // add contador regresivo 10 times intento de conexion
+boolean ConnectUDP() {
   Serial.println();
   Serial.println("Starting UDP");
   // in UDP error, block execution
@@ -258,24 +264,6 @@ bool Is_config_queue(char * queue) {
   }
 }
 
-void load_config_in_queue(struct LedStripConfig * Config) {
-  if ( xQueueSend(queue_config, Config, ( TickType_t ) 10 ) != pdPASS) {
-    Serial.println("Error: Load data in queue config");
-  } else {
-    Serial.println("Successful: Load data in queue config");
-  }
-}
-
-void read_config_queue(struct LedStripConfig * Config) {
-  if (xQueueReceive(queue_config, &Config, ( TickType_t ) 10 ) == pdPASS) {
-    Serial.println("Successful : Data read from config queue");
-  } else {
-    Serial.println("Error : Data read from config queue");
-  }
-}
-
-
-
 
 void TaskLedStereo(void *pvParameters) {
   struct Led_Stereo led_stereo;
@@ -288,9 +276,9 @@ void TaskLedStereo(void *pvParameters) {
   unsigned int blue_right = 0 ;
   for (;;) {
     xSemaphoreTake(binSemaphore, portMAX_DELAY);
-    while (read_data) {
+    
       if (xQueueReceive(queue_stereo, &led_stereo, ( TickType_t ) 10) == pdPASS) {
-        //if color is #XXXXXX cada led de un color
+       
         red_left = red_from_hexColor(led_stereo.color_left);
         green_left = green_from_hexColor(led_stereo.color_left);
         blue_left = blue_from_hexColor(led_stereo.color_left);
@@ -298,23 +286,7 @@ void TaskLedStereo(void *pvParameters) {
         red_right = red_from_hexColor(led_stereo.color_right);
         green_right = green_from_hexColor(led_stereo.color_right);
         blue_right = blue_from_hexColor(led_stereo.color_right);
-
-
-        //int limite_left = int(led_stereo.brightness_left * (NUM_LEDS_L / 255.0));
-
-        //int limite_right = int(led_stereo.brightness_right * (NUM_LEDS_R / 255.0));
-        /*Serial.print("leds para izquierda: " );
-          Serial.println(limite_left);
-          Serial.print("leds para derecha " );
-          Serial.println(limite_right);*/
-        /*for (int i = 0; i < limite_left; i++) {
-          leds_L[i] = CRGB(red_left, green_left, blue_left);
-
-          }
-
-          for (int i = 0; i < limite_right; i++) {
-          leds_R[i] = CRGB(red_right, green_right, blue_right);
-          }*/
+        
         for ( int i = 0 ; i < NUM_LEDS_L; i++) {
           leds_L[i] = CRGB(red_left, green_left, blue_left);
         }
@@ -326,12 +298,9 @@ void TaskLedStereo(void *pvParameters) {
         FastLED[0].showLeds(led_stereo.brightness_left);
         FastLED[1].showLeds(led_stereo.brightness_right);
 
-      } else {
-        read_data = false;
       }
       vTaskDelay(pdMS_TO_TICKS(TIME_SEND_INFO));
-    }
-    read_data = true;
+   
   }
 }
 
@@ -353,4 +322,27 @@ unsigned int blue_from_hexColor(char * Hexcolor) {
   char color[3] = {};
   memcpy(color, Hexcolor + 5, 2);
   return (unsigned int)strtoul(color, NULL, 16);
+}
+
+void sequenceConnect() {
+  for (int i = 0; i < NUM_LEDS_L; i++) {
+    leds_L[i] =  CRGB(0, 0, 0); //left channel
+  }
+  for (int i = 0; i < NUM_LEDS_R; i++) {
+    leds_R[i] = CRGB(0, 0, 0);
+  }
+
+  leds_L[0] = CRGB(255, 255, 255); //left channel
+  leds_R[0] = CRGB(255, 255, 255);
+
+  FastLED[0].showLeds(10);
+  FastLED[1].showLeds(10);
+
+  delay(200);
+  leds_L[0] = CRGB(0, 0, 0); //left channel
+  leds_R[0] = CRGB(0, 0, 0);
+
+  FastLED[0].showLeds(10);
+  FastLED[1].showLeds(10);
+
 }
