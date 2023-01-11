@@ -85,15 +85,22 @@ void setup() {
   FastLED.addLeds<NEOPIXEL, DATA_PIN_L>(leds_L, NUM_LEDS_L);
   FastLED.addLeds<NEOPIXEL, DATA_PIN_R>(leds_R, NUM_LEDS_R);
 
+  digitalWrite(DATA_PIN_R,HIGH);
+  delay(500);
+  
   for (int i = 0; i < NUM_LEDS_L; i++) {  //left channel
     leds_L[i] = CHSV(1, 255, 255);
   }
   for (int i = 0; i < NUM_LEDS_R; i++) {  //right channel
     leds_R[i] = CHSV(1, 255, 255);
   }
-
+  
   FastLED[0].showLeds(10);
   FastLED[1].showLeds(10);
+  
+  digitalWrite(DATA_PIN_R,HIGH);
+  delay(2000);
+  digitalWrite(DATA_PIN_R,LOW);
 
 }
 
