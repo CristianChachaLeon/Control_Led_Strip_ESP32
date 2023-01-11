@@ -50,14 +50,22 @@ Alternatively you can push button and conect to ESP32 to see actual IP
 To run the Python interface script, you need flowing dependencies: pyaudio, numpy, tkinter, and math.
 ## How to use
 Once Code is uploaded in ESP32, connect the led strip and power up the device, led strip turn on with the color red.
+
 Push the button to connect to ESP32 to create another network and visualize the actual IP Address. When you have IP, reset ESP32.
+
 Execute Python Script and introduce ESP32’s IP, click on “connect”, led Strip change color to white, and turn off.
 Click on “Show device input” and select: Mezcla stereo.
+
+![Interface_python](Images/Interface_python.png)
  
-Python script analyze audio and send color and brightness to ESP32. Actually, I, used “Mezcla stereo” as input audio, I’m working to read the audio from the previous stage. To have a better performance I recommend connecting your output audio to speakers.
+Python script analyze audio and send color and brightness to ESP32. Actually, I, used “Mezcla stereo” as input audio, I’m working to read the audio from the previous stage. 
+
+To have a better performance I recommend connecting your output audio to speakers.
+
 Move Gain control to have more brightness if the volume in your PC is low.
 
 If you push Stop, transmission data stop and you need to connect again ESP32 and you PC, this step is useful because your ESP32 will consume low power while it is not connected.
+
 ### Operation mode
 There are different operation modes
 *Select color:
