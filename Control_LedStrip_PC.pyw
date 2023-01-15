@@ -36,8 +36,6 @@ class LowPassFilter:
     gain = 1
     def __init__(self,fc,fm):
         beta=math.exp((-2*math.pi * fc) / fm)
-        print(fm)
-        print(beta)
         self.param1=1-beta
         self.param2=beta
     def filter_in(self,in_k_1,out_k_1):
@@ -230,30 +228,23 @@ class Player:
             frames_per_buffer=CHUNK
         )
 
-        self.FilterLeft= LowPassFilter(5,self.sample_rate)
-        self.FilterRight= LowPassFilter(5,self.sample_rate)
-        self.FilterMono=LowPassFilter(5,self.sample_rate)
+        self.FilterLeft= LowPassFilter(500,self.sample_rate)
+        self.FilterRight= LowPassFilter(500,self.sample_rate)
+        self.FilterMono=LowPassFilter(500,self.sample_rate)
+
+        self.FilterBrightness=LowPassFilter(1,self.sample_rate/CHUNK)
+        self.FilterBrightness_Left=LowPassFilter(1,self.sample_rate/CHUNK)
+        self.FilterBrightness_Right=LowPassFilter(1,self.sample_rate/CHUNK)
+        
 
         self.FilterFreq=LowPassFilter(0.1,self.sample_rate/(CHUNK//2))
         self.FilterFreq_Left=LowPassFilter(0.1,self.sample_rate/(CHUNK//2))
         self.FilterFreq_Right=LowPassFilter(0.1,self.sample_rate/(CHUNK//2))
 
-        self.FilterFreq_Left.printParam()
-        self.FilterFreq_Right.printParam()    
-        #fig, ax = plt.subplots()
 
-        frecuency=fftfreq(CHUNK,1/self.sample_rate)[:CHUNK//2]
-        freq_selec=np.ones(1024)
-        freq_selec_left=np.ones(1024)
-        freq_selec_right=np.ones(1024)
-        freq_selec_filtered=np.ones(1024)
-        print(len(freq_selec))
+    
         
-        #line, =ax.plot(range(1024),np.random.rand(1024))
-        #line2 , =ax.plot(range(1024),np.random.rand(1024))
 
-        #ax.set_ylim(0,100)
-        #ax.set_xlim(0,1024)
         clock=1
 
         try:
@@ -261,41 +252,56 @@ class Player:
                 data = stream.read(CHUNK)
                 signal_array= np.frombuffer(data,dtype=np.int16)
                 
-                signal_left=signal_array[::2]  #split data from stream read in two channels
+                signal_left=signal_array[::2]  #split data from stream read in two channels   
                 signal_right=signal_array[1::2]         
-
+                
                 if self.VarAudioMode.get()==1:
                     signal_mono=(signal_left+signal_right)/2
+
+                    #filter audio
                     self.FilterMono.setgain(self.gain_Strip_led.get())
                     signal_mono_filtered=self.FilterMono.filter_array(signal_mono)
-                    signal_mono_fitlered=np.multiply(signal_mono_filtered,RESOLUTUION_ESP32)
+                    signal_mono_filtered=np.multiply(signal_mono_filtered,RESOLUTUION_ESP32)
 
-                    brightness=int(max(signal_mono_fitlered))
-                    brightness_left=brightness
-                    brightness_right=brightness
-                    
-                    brightness=limitmaxValue(brightness,255)
-                    
+                    #filter brightness
+                    brightness=max(signal_mono_filtered)
+                    brightness_filtered=self.FilterBrightness.filter_in(self.FilterBrightness.xk_1,self.FilterBrightness.yk_1)
+                    self.FilterBrightness.update(brightness,brightness_filtered)
+
+                    brightness_left=int(brightness_filtered)
+                    brightness_right=int(brightness_filtered)
 
                 elif self.VarAudioMode.get()==2:
-                    self.FilterLeft.setgain(self.gain_Strip_led.get())
-                    self.FilterRight.setgain(self.gain_Strip_led.get())
+                    #filter audio left
+                    self.FilterLeft.setgain(self.gain_Strip_led.get())    
                     signal_left_filtered=self.FilterLeft.filter_array(signal_left)
-                    signal_right_filtered=self.FilterRight.filter_array(signal_right)
-
                     signal_left_filtered=np.multiply(signal_left_filtered,RESOLUTUION_ESP32)
+
+                    #filter audio right
+                    self.FilterRight.setgain(self.gain_Strip_led.get())
+                    signal_right_filtered=self.FilterRight.filter_array(signal_right)
                     signal_right_filtered=np.multiply(signal_right_filtered,RESOLUTUION_ESP32)
 
-                    brightness_left=int(max(signal_left_filtered))
-                    brightness_right=int(max(signal_right_filtered))
+                    #filter brightness left channel
+                    brightness_left=max(signal_left_filtered)           
+                    brightness_left_filtered=self.FilterBrightness_Left.filter_in(self.FilterBrightness_Left.xk_1,self.FilterBrightness_Left.yk_1)
+                    self.FilterBrightness_Left.update(brightness_left,brightness_left_filtered)
+                    
+                    #filter brightness right channel
+                    brightness_right=max(signal_right_filtered)
+                    brightness_right_filtered=self.FilterBrightness_Right.filter_in(self.FilterBrightness_Right.xk_1,self.FilterBrightness_Right.yk_1)
+                    self.FilterBrightness_Right.update(brightness_right,brightness_right_filtered)
 
-                    #limit to 255 for send
-                    brightness_left=limitmaxValue(brightness_left,255)
-                    brightness_right=limitmaxValue(brightness_right,255)
-                                
+                    brightness_left=int(brightness_left_filtered)
+                    brightness_right=int(brightness_right_filtered)      
+
                 else:
                     self.playing=False
                     break
+                    
+                #limit to 255 for send
+                brightness_left=limitmaxValue(brightness_left,255)
+                brightness_right=limitmaxValue(brightness_right,255)
             
                 if self.VarAudioColor.get()==1: #Color select
                     if self.VarAudioMode.get()==1:
@@ -305,52 +311,28 @@ class Player:
                         color_left=self.color_left
                         color_right=self.color_right
 
-                    
-                    
-                    
                 elif self.VarAudioColor.get()==2: #Rainbown
                     clock=clock+1
                     clock_devided=frecuency_devider(clock,10)
-                    color=rainbow_color(clock_devided)
-                    color_left=color
-                    color_right= color
+                    color_rainbow=rainbow_color(clock_devided)
+                    color_left=color_rainbow
+                    color_right= color_rainbow
                     
                 elif self.VarAudioColor.get()==3: # response Frecuency
-                    #frecuency=fftfreq(CHUNK,1/self.sample_rate)[:CHUNK//2]
+                   
                     if self.VarAudioMode.get()==1:
                         #Analysis and filter signal
                         max_freq=searchMaxFrequency(signal_mono)
                         max_freq_filtered=self.FilterFreq.filter_in(self.FilterFreq.xk_1,self.FilterFreq.yk_1)
                         self.FilterFreq.update(max_freq,max_freq_filtered)
-                        
-
-                        #graph------------
-                        # raw
-                        freq_selec=np.append(freq_selec,max_freq)
-                        freq_selec=freq_selec[1:]
-                        # filtered
-                        freq_selec_filtered=np.append(freq_selec_filtered,max_freq_filtered)
-                        freq_selec_filtered=freq_selec_filtered[1:]
-
-                        #line.set_ydata(freq_selec)
-                        #line2.set_ydata(freq_selec_filtered)
-                        
-                        #fig.canvas.draw()
-                        #fig.canvas.flush_events()
-                        #plt.pause(0.001)
-                        #graph----------------
 
                         max_freq_filtered=limitmaxValue(max_freq_filtered,100)
 
                         #color set
                         color_dft=setColorfromFreq(max_freq_filtered)   
-                        color_left=color_right=color_dft
+                        color_left=color_dft
+                        color_right=color_dft
 
-                        #brightness set, max value for LED=255 ,max value of brightness=100
-                        brightness=setBrightness(max_freq_filtered)
-                        brightness_left=int(AdjustGain(brightness,(255/100)*(self.gain_Strip_led.get()/10)))
-                        
-                        brightness_right=brightness_left
                         
                     elif self.VarAudioMode.get()==2:
                         
@@ -362,26 +344,9 @@ class Player:
 
                         #Analysis and filter right signal
                         max_freq_right=searchMaxFrequency(signal_right)
-
                         max_freq_right_filtered=self.FilterFreq_Right.filter_in(self.FilterFreq_Right.xk_1,self.FilterFreq_Right.yk_1)
                         self.FilterFreq_Right.update(max_freq_right,max_freq_right_filtered)
                         
-                        #print("max_freq_right:"+str(max_freq_right))
-                        #graph---------------
-                        #
-                        freq_selec_left=np.append(freq_selec_left,max_freq_left_filtered)
-                        freq_selec_left=freq_selec_left[1:]
-
-                        freq_selec_right=np.append(freq_selec_right,max_freq_right_filtered)
-                        freq_selec_right=freq_selec_right[1:]
-
-                        #freq_selec_left_filtered=np.append(freq_selec_left_filtered,max_freq_left_filtered)
-                        #freq_selec_left_filtered=freq_selec_left_filtered[1:]                  
-                        #
-                        #
-                        #graph---------------
-                        #print("max_freq_left_filtered:"+str(max_freq_left_filtered))
-                        #print("max_freq_right_filtered:"+str(max_freq_right_filtered))
 
                         max_freq_left_filtered=limitmaxValue(max_freq_left_filtered,100)
                         max_freq_right_filtered=limitmaxValue(max_freq_right_filtered,100)
@@ -389,10 +354,6 @@ class Player:
                         color_left=setColorfromFreq(max_freq_left_filtered)
                         color_right=setColorfromFreq(max_freq_left_filtered)
 
-                        brightness_left=int(max(signal_left)*RESOLUTUION_ESP32*(self.gain_Strip_led.get()))
-                        brightness_right=int(max(signal_right)*RESOLUTUION_ESP32*(self.gain_Strip_led.get()))
-                        brightness_left=limitminValue(brightness_left,5)
-                        brightness_right=limitminValue(brightness_right,5)
 
                                     
                 messageUDP =  color_left+str(brightness_left)+'-'+color_right+str(brightness_right)
