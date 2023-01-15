@@ -68,15 +68,15 @@ If you push Stop, transmission data stop and you need to connect again ESP32 and
 
 ### Operation mode
 There are different operation modes
-*Select color:
-	*Mono: Select the color of the whole led strip 
-	*Stereo: Select the color of each strip, left and right led strip
-*Rainbow Strip
-	*Mono: Change color like a rainbow
-	*Stereo: Change color like a rainbow
-*Response Frecuency:
-	*Mono: Change color and brightness in function of dominant frequency 
-	*Stereo: Change color and brightness in function of dominant frequency and volume of each channel.
+* Select color:
+	* Mono: Select the color of the whole led strip 
+	* Stereo: Select the color of each strip, left and right led strip
+* Rainbow Strip
+	* Mono: Change color like a rainbow
+	* Stereo: Change color like a rainbow
+* Response Frecuency:
+	* Mono: Change color and brightness in function of dominant frequency 
+	* Stereo: Change color and brightness in function of dominant frequency and volume of each channel.
 All mode Mono analyzes audio mono, while Stereo analyzes two channels separately 
 
 ## Q& A
