@@ -49,6 +49,9 @@ Alternatively you can push button and conect to ESP32 to see actual IP
 ### Python
 To run the Python interface script, you need flowing dependencies: pyaudio, numpy, tkinter, and math.
 ## How to use
+
+![Easy_use](Images/How_to_use.png)
+
 Once Code is uploaded in ESP32, connect the led strip and power up the device, led strip turn on with the color red.
 
 Push the button to connect to ESP32 to create another network and visualize the actual IP Address. When you have IP, reset ESP32.
