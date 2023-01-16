@@ -11,7 +11,7 @@ The image below shows a description of the high-level concept of the project.
 ###Python side
 A description of the concept of python is shown below, basically, there are multiple operation modes. Select color, Rainbow Color, and Frequency response, these modules select color and brightness, and the last block sends information throw UDP protocol.
 
-![Processing_audio_concept](Images/Python_concept_side.png)
+![Processing_audio_concept](Images/Python_concept_side_v2.png)
 
 ## How to install
 ### Hardware
